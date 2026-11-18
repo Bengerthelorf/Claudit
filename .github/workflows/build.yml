@@ -263,7 +263,7 @@ jobs:
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@40c2ca6ddd77ba2a30bbea8f67409c0f76868d67 # v3
         with:
           files: build/Claudit.dmg
           body_path: CHANGELOG.md
@@ -272,48 +272,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update Homebrew Cask
+      - name: Publish checked Homebrew update
         if: startsWith(github.ref, 'refs/tags/')
         env:
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        shell: bash
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          TAG=${GITHUB_REF#refs/tags/}
-          DMG_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/Claudit.dmg"
-
-          SHA256=$(shasum -a 256 build/Claudit.dmg | cut -d ' ' -f 1)
-
-          git clone https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/Bengerthelorf/homebrew-tap.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-          mkdir -p Casks
-
-          cat > Casks/claudit.rb <<CASK
-          cask "claudit" do
-            version "${VERSION}"
-            sha256 "${SHA256}"
-
-            url "${DMG_URL}"
-            name "Claudit"
-            desc "Claude API usage tracker for macOS menu bar"
-            homepage "https://github.com/Bengerthelorf/Claudit"
-
-            depends_on macos: ">= :ventura"
-
-            app "Claudit.app"
-
-            zap trash: [
-              "~/Library/Preferences/homes.snaix.Claudit.plist",
-            ]
-          end
-          CASK
-
-          sed -i '' 's/^          //' Casks/claudit.rb
-
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add Casks/claudit.rb
-          git diff --cached --quiet && echo "No changes" || git commit -m "Update claudit to ${TAG}"
-          git push origin main
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" == true ]]; then
+            echo "Prereleases do not update the stable Homebrew tap"
+            exit 0
+          fi
+          gh auth setup-git
+          TAP_DIR="$RUNNER_TEMP/homebrew-tap"
+          gh repo clone Bengerthelorf/homebrew-tap "$TAP_DIR"
+          bash "$TAP_DIR/scripts/publish-update.sh" claudit "$TAG"
 
       - name: Redeploy docs (updates appcast on GitHub Pages)
         if: startsWith(github.ref, 'refs/tags/')
